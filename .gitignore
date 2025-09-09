@@ -9,3 +9,5 @@ build/
 *.py[cdow]
 *.pt
 data/
+runs/
+*.pt

@@ -13,7 +13,12 @@ dependencies = [
     "torchvision (>=0.23.0,<0.24.0)",
     "triton (>=3.4.0,<4.0.0) ; sys_platform != \"win32\"",
     "triton-windows (>=3.4.0.post20,<4.0.0) ; sys_platform == \"win32\"",
+    "tqdm (>=4.67.1,<5.0.0)",
+    "tensorboard (>=2.20.0,<3.0.0) ; extra == \"tb\"",
 ]
+
+[project.optional-dependencies]
+tb = ["tensorboard (>=2.20.0,<3.0.0)"]
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
@@ -32,9 +37,13 @@ packages = [{ include = "btmnist" }]
 [tool.poetry.dependencies]
 python = ">=3.11,<3.14"
 
+[tool.poetry.extras]
+tb = ["tensorboard"]
+
 [tool.poetry.group.dev.dependencies]
 isort = "^5.13.0"
 ruff = "^0.12.12"
+poetry = "^2.1.4"
 
 [tool.ruff]
 fix = true
