@@ -1,6 +1,6 @@
 [project]
 name = "btmnist"
-version = "0.1.1"
+version = "0.1.2"
 description = "Balanced-ternary MNIST with Triton GEMM"
 authors = [
     {name = "DJ Stomp",email = "85457381+DJStompZone@users.noreply.github.com"}
@@ -15,6 +15,7 @@ dependencies = [
     "triton-windows (>=3.4.0.post20,<4.0.0) ; sys_platform == \"win32\"",
     "tqdm (>=4.67.1,<5.0.0)",
     "tensorboard (>=2.20.0,<3.0.0) ; extra == \"tb\"",
+    "huggingface-hub (>=0.34.4)"
 ]
 
 [project.optional-dependencies]
@@ -27,7 +28,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 name = "btmnist"
-version = "0.1.1"
+version = "0.1.2"
 description = "Balanced-ternary MNIST with Triton GEMM"
 authors = ["DJ Stomp <85457381+DJStompZone@users.noreply.github.com>"]
 license = "MIT"
