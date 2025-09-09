@@ -34,7 +34,7 @@ def _ceil_div(a: int, b: int) -> int:
 
 def pack_bitplanes(x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
     """
-    Pack a tensor of int8 values in {-1, 0, +1} into two uint32 bit-planes (pos, neg).
+    Pack a tensor of int8 values in {-1, 0, +1} into two int32 bit-planes (pos, neg).
 
     Parameters
     ----------
@@ -44,27 +44,47 @@ def pack_bitplanes(x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
     Returns
     -------
     pos, neg : torch.Tensor
-        Both uint32 tensors of shape [R, ceil(K/32)] representing +1 and -1 positions.
+        Both int32 tensors of shape [R, ceil(K/32)] representing +1 and -1 positions.
     """
     assert x.dtype == torch.int8 and x.dim() == 2
     device = x.device
     R, K = x.shape
     W = 32
-    K_words = _ceil_div(K, W)
-    pos = torch.zeros((R, K_words), dtype=torch.uint32, device=device)
-    neg = torch.zeros((R, K_words), dtype=torch.uint32, device=device)
+    K_words = (K + W - 1) // W
 
-    # Vectorized within each 32-wide word
-    arange32 = torch.arange(W, device=device, dtype=torch.uint32)
+    pos = torch.zeros((R, K_words), dtype=torch.int32, device=device)
+    neg = torch.zeros((R, K_words), dtype=torch.int32, device=device)
+
+    # Build bit masks with int64 then downcast to int32
+    one64 = torch.tensor(1, dtype=torch.int64, device=device)
     for w in range(K_words):
         start = w * W
         end = min(start + W, K)
         width = end - start
-        bits = (torch.ones((R, 1), device=device, dtype=torch.uint32) << arange32[:width]).contiguous()
-        chunk = x[:, start:end]
-        pos[:, w] = ((chunk == 1).to(torch.uint32) * bits).sum(dim=1)
-        neg[:, w] = ((chunk == -1).to(torch.uint32) * bits).sum(dim=1)
+        chunk = x[:, start:end]  # [R, width]
+        bit_vals64 = one64 << torch.arange(width, dtype=torch.int64, device=device)  # [width]
+        bit_vals32 = bit_vals64.to(torch.int32).unsqueeze(0).expand(R, width)        # [R, width]
+
+        pos_mask = (chunk == 1).to(torch.int32) * bit_vals32
+        neg_mask = (chunk == -1).to(torch.int32) * bit_vals32
+
+        pos[:, w] = pos_mask.sum(dim=1)
+        neg[:, w] = neg_mask.sum(dim=1)
+
     return pos, neg
+
+
+@triton.jit
+def _popcount32(x):
+    """
+    Population count for 32-bit lanes using SWAR bit hacks.
+    Input/Output dtype: int32 (unsigned semantics for masks).
+    """
+    x = x - ((x >> 1) & 0x55555555)
+    x = (x & 0x33333333) + ((x >> 2) & 0x33333333)
+    x = (x + (x >> 4)) & 0x0F0F0F0F
+    return (x * 0x01010101) >> 24  # returns int32 per lane
+
 
 @triton.jit
 def _ternary_gemm_kernel(
@@ -101,18 +121,22 @@ def _ternary_gemm_kernel(
 
         aP = tl.load(a_pos_ptr + offs_m[:, None] * lda + k_range[None, :], mask=a_mask, other=0)
         aN = tl.load(a_neg_ptr + offs_m[:, None] * lda + k_range[None, :], mask=a_mask, other=0)
-        bP = tl.load(b_pos_ptr + offs_n[None, :] * ldb + k_range[:, None], mask=b_mask, other=0).T
-        bN = tl.load(b_neg_ptr + offs_n[None, :] * ldb + k_range[:, None], mask=b_mask, other=0).T
+        bP = tl.load(b_pos_ptr + offs_n[None, :] * ldb + k_range[:, None], mask=b_mask, other=0)  # [BLOCK_KW, BLOCK_N]
+        bN = tl.load(b_neg_ptr + offs_n[None, :] * ldb + k_range[:, None], mask=b_mask, other=0)  # [BLOCK_KW, BLOCK_N]
 
-        for t in range(0, BLOCK_KW):
-            ap = aP[:, t]
-            an = aN[:, t]
-            bp = bP[t, :]
-            bn = bN[t, :]
-            acc_pp += tl.popcount(ap[:, None] & bp[None, :])
-            acc_pn += tl.popcount(ap[:, None] & bn[None, :])
-            acc_np += tl.popcount(an[:, None] & bp[None, :])
-            acc_nn += tl.popcount(an[:, None] & bn[None, :])
+        # aP,aN: [BLOCK_M, BLOCK_KW]  int32
+        # bP,bN: [BLOCK_KW, BLOCK_N]  int32
+        # Broadcast to [BLOCK_M, BLOCK_KW, BLOCK_N], popcount per 32-bit lane
+        pp = _popcount32(aP[:, :, None] & bP[None, :, :])
+        pn = _popcount32(aP[:, :, None] & bN[None, :, :])
+        np = _popcount32(aN[:, :, None] & bP[None, :, :])
+        nn = _popcount32(aN[:, :, None] & bN[None, :, :])
+        # then sum over KW
+        acc_pp += tl.sum(pp, axis=1)
+        acc_pn += tl.sum(pn, axis=1)
+        acc_np += tl.sum(np, axis=1)
+        acc_nn += tl.sum(nn, axis=1)
+
 
     alpha_p = tl.load(alpha_p_ptr + offs_n, mask=offs_n < N, other=0.0)[None, :]
     alpha_n = tl.load(alpha_n_ptr + offs_n, mask=offs_n < N, other=0.0)[None, :]
@@ -169,8 +193,8 @@ def ternary_gemm_triton(
     block: int = 128,
     block_kw: int = 8,
 ) -> torch.Tensor:
-    assert a_pos.dtype == torch.uint32 and a_neg.dtype == torch.uint32
-    assert b_pos.dtype == torch.uint32 and b_neg.dtype == torch.uint32
+    assert a_pos.dtype == torch.int32 and a_neg.dtype == torch.int32
+    assert b_pos.dtype == torch.int32 and b_neg.dtype == torch.int32
     assert a_pos.device == b_pos.device == alpha_p.device
     M, Kw = a_pos.shape
     N, Kw_b = b_pos.shape

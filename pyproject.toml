@@ -1,6 +1,6 @@
 [project]
 name = "btmnist"
-version = "0.1.0"
+version = "0.1.1"
 description = "Balanced-ternary MNIST with Triton GEMM"
 authors = [
     {name = "DJ Stomp",email = "85457381+DJStompZone@users.noreply.github.com"}
@@ -22,7 +22,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 name = "btmnist"
-version = "0.1.0"
+version = "0.1.1"
 description = "Balanced-ternary MNIST with Triton GEMM"
 authors = ["DJ Stomp <85457381+DJStompZone@users.noreply.github.com>"]
 license = "MIT"

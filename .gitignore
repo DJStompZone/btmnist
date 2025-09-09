@@ -1,0 +1,11 @@
+site-packages/
+.ipynb_checkpoints/
+.vscode/
+.pyenv/
+poetry_cache/
+.pytest_cache/
+__pycache__/
+build/
+*.py[cdow]
+*.pt
+data/
