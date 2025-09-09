@@ -20,6 +20,7 @@ from huggingface_hub import (
     whoami,
     hf_hub_url,
 )
+from huggingface_hub._commit_api import CommitOperationAdd
 
 
 @dataclass
@@ -81,12 +82,23 @@ def push_file(local_path: str, remote_path: str, spec: HubSpec) -> str:
     return url
 
 
-def push_many(pairs: Iterable[Tuple[str, str]], spec: HubSpec) -> None:
+def push_many(pairs, spec: HubSpec) -> None:
     """
-    Upload many (local, remote) pairs to the repo.
+    Commit many files in one shot. Only changed files are included
     """
+    api = HfApi()
+    ops = []
     for local, remote in pairs:
-        push_file(local, remote, spec)
+        with open(local, "rb") as f:
+            data = f.read()
+        ops.append(CommitOperationAdd(path_in_repo=remote, path_or_fileobj=data))
+    api.create_commit(
+        repo_id=spec.repo_id,
+        repo_type=spec.repo_type,
+        operations=ops,
+        commit_message=spec.commit_message,
+        revision=spec.branch,
+    )
 
 
 def dump_json(obj, path: str) -> None:
